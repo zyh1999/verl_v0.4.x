@@ -691,6 +691,9 @@ class RayPPOTrainer:
                         idx_vals = np.array([d.get("index") for d in extra_info], dtype=object)
 
                     keep = np.zeros(bs, dtype=bool)
+                    # Track the smallest hash value to guarantee at least one kept sample.
+                    min_u = 1.0
+                    min_i = 0
                     for i in range(bs):
                         if idx_vals is not None and idx_vals[i] is not None:
                             key_bytes = (str(idx_vals[i]) + f"|{val_subset_seed}").encode("utf-8")
@@ -701,9 +704,16 @@ class RayPPOTrainer:
                         h = hashlib.blake2b(key_bytes, digest_size=8).digest()
                         u = int.from_bytes(h, "little") / float(2**64)
                         keep[i] = u < val_subset_ratio
+                        if u < min_u:
+                            min_u = u
+                            min_i = i
 
                 if not np.any(keep):
-                    continue
+                    # Ensure validation never becomes empty due to unlucky subsampling.
+                    if val_subset_resample_each_eval:
+                        keep[int(rng.randint(bs))] = True  # type: ignore[union-attr]
+                    else:
+                        keep[min_i] = True
                 idxs = np.nonzero(keep)[0]
                 n_selected += len(idxs)
                 test_batch = test_batch[idxs]
