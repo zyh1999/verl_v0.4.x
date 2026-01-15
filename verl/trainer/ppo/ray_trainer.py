@@ -21,6 +21,7 @@ This trainer supports model-agonistic model initialization with huggingface
 import json
 import os
 import uuid
+import hashlib
 from collections import defaultdict
 from contextlib import contextmanager
 from copy import deepcopy
@@ -657,8 +658,55 @@ class RayPPOTrainer:
         sample_outputs = []
         sample_scores = []
 
+        # Optional validation subsampling (to reduce validation overhead).
+        # We sample ~ratio of each validation batch before repeating (val_kwargs.n).
+        # - If val_subset_resample_each_eval=False: use a deterministic hash-based filter (stable subset across evals)
+        # - If True: resample stochastically each eval based on (seed + global_steps)
+        val_subset_ratio = float(self.config.trainer.get("val_subset_ratio", 1.0))
+        val_subset_seed = int(self.config.trainer.get("val_subset_seed", 42))
+        val_subset_resample_each_eval = bool(self.config.trainer.get("val_subset_resample_each_eval", True))
+        if val_subset_ratio <= 0.0:
+            return {}
+        if val_subset_ratio < 1.0:
+            seed = val_subset_seed + (self.global_steps if val_subset_resample_each_eval else 0)
+            rng = np.random.RandomState(seed) if val_subset_resample_each_eval else None
+            n_total, n_selected = 0, 0
+
         for test_data in self.val_dataloader:
             test_batch = DataProto.from_single_dict(test_data)
+
+            if val_subset_ratio < 1.0:
+                bs = len(test_batch)
+                n_total += bs
+                if val_subset_resample_each_eval:
+                    keep = rng.rand(bs) < val_subset_ratio  # type: ignore[union-attr]
+                else:
+                    # Deterministic selection: hash(unique_id + seed) -> u in [0,1)
+                    # Try to use extra_info.index (preferred), otherwise fall back to input_ids bytes.
+                    extra_info = test_batch.non_tensor_batch.get("extra_info", None)
+                    idx_vals = None
+                    if isinstance(extra_info, dict) and "index" in extra_info:
+                        idx_vals = extra_info["index"]
+                    elif isinstance(extra_info, np.ndarray) and bs > 0 and isinstance(extra_info[0], dict) and "index" in extra_info[0]:
+                        idx_vals = np.array([d.get("index") for d in extra_info], dtype=object)
+
+                    keep = np.zeros(bs, dtype=bool)
+                    for i in range(bs):
+                        if idx_vals is not None and idx_vals[i] is not None:
+                            key_bytes = (str(idx_vals[i]) + f"|{val_subset_seed}").encode("utf-8")
+                        else:
+                            # fallback: hash token ids (stable for a fixed tokenizer/template)
+                            ids = test_batch.batch["input_ids"][i].detach().cpu().numpy()
+                            key_bytes = ids.tobytes() + f"|{val_subset_seed}".encode("utf-8")
+                        h = hashlib.blake2b(key_bytes, digest_size=8).digest()
+                        u = int.from_bytes(h, "little") / float(2**64)
+                        keep[i] = u < val_subset_ratio
+
+                if not np.any(keep):
+                    continue
+                idxs = np.nonzero(keep)[0]
+                n_selected += len(idxs)
+                test_batch = test_batch[idxs]
 
             # repeat test batch
             test_batch = test_batch.repeat(repeat_times=self.config.actor_rollout_ref.rollout.val_kwargs.n, interleave=True)
@@ -728,6 +776,10 @@ class RayPPOTrainer:
 
             data_source_lst.append(test_batch.non_tensor_batch.get("data_source", ["unknown"] * reward_tensor.shape[0]))
 
+        if val_subset_ratio < 1.0:
+            mode = "resample" if val_subset_resample_each_eval else "fixed"
+            print(f"[validation] val_subset_ratio={val_subset_ratio} selected={n_selected}/{n_total} (mode={mode}, seed={seed})")
+
         self._maybe_log_val_generations(inputs=sample_inputs, outputs=sample_outputs, scores=sample_scores)
 
         # dump generations
@@ -744,6 +796,8 @@ class RayPPOTrainer:
         for key_info, lst in reward_extra_infos_dict.items():
             assert len(lst) == 0 or len(lst) == len(sample_scores), f"{key_info}: {len(lst)=}, {len(sample_scores)=}"
 
+        if len(data_source_lst) == 0:
+            return {}
         data_sources = np.concatenate(data_source_lst, axis=0)
 
         data_src2var2metric2val = process_validation_metrics(data_sources, sample_inputs, reward_extra_infos_dict)

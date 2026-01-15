@@ -462,6 +462,7 @@ def compute_policy_loss(
     cliprange_high=None,
     clip_ratio_c=3.0,
     loss_agg_mode: str = "token-mean",
+    use_importance_sampling: bool = True,
 ):
     """
     Compute the clipped policy objective and related metrics for PPO.
@@ -503,6 +504,7 @@ def compute_policy_loss(
     if cliprange_high is None:
         cliprange_high = cliprange
     pg_losses2 = -advantages * torch.clamp(ratio, 1 - cliprange_low, 1 + cliprange_high)  # - clip(ratio, 1-cliprange, 1+cliprange) * A
+    # Default behavior (backward-compatible): keep original torch.maximum/torch.min formulation.
     clip_pg_losses1 = torch.maximum(pg_losses1, pg_losses2)  # max(-ratio * A, -clip(ratio, 1-cliprange, 1+cliprange) * A)
     pg_clipfrac = verl_F.masked_mean(torch.gt(pg_losses2, pg_losses1).float(), response_mask)
 
@@ -511,6 +513,11 @@ def compute_policy_loss(
     pg_clipfrac_lower = verl_F.masked_mean(torch.gt(clip_pg_losses1, pg_losses3) * (advantages < 0).float(), response_mask)
 
     pg_losses = torch.where(advantages < 0, clip_pg_losses2, clip_pg_losses1)
+    if not use_importance_sampling:
+        # "No-IS" style (same spirit as SB3's adv_loss_remove_ratio):
+        # divide by ratio.detach() so the gradient becomes VPG-like (∝ A * ∇logπ),
+        # while keeping PPO's clipping mask/structure.
+        pg_losses = pg_losses / ratio.detach()
     pg_loss = agg_loss(loss_mat=pg_losses, loss_mask=response_mask, loss_agg_mode=loss_agg_mode)
 
     return pg_loss, pg_clipfrac, ppo_kl, pg_clipfrac_lower

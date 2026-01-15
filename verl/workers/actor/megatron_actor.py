@@ -354,6 +354,7 @@ class MegatronPPOActor(BasePPOActor):
                     cliprange_high=clip_ratio_high,
                     clip_ratio_c=clip_ratio_c,
                     loss_agg_mode=loss_agg_mode,
+                    use_importance_sampling=self.config.get("use_importance_sampling", True),
                 )
                 policy_loss = pg_loss
             if calculate_entropy:
