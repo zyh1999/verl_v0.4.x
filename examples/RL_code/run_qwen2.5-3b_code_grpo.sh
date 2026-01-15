@@ -20,8 +20,8 @@ PYTHON_BIN="${PYTHON_BIN:-/mnt/iusers01/fatpou01/compsci01/h99859yz/miniconda3/e
 
 nnodes="${NNODES:-1}"
 
-# 数据（默认用 $HOME/data/code；也可通过环境变量覆盖）
-data_root="${DATA_ROOT:-$HOME/data}"
+# 数据（默认用仓库内的 ./data；也可通过环境变量覆盖）
+data_root="${DATA_ROOT:-${ROOT_DIR}/data}"
 code_train_path="${CODE_TRAIN_PATH:-$data_root/code/train.parquet}"
 code_test_path="${CODE_TEST_PATH:-$data_root/code/test.parquet}"
 
@@ -57,7 +57,7 @@ val_do_sample="${VAL_DO_SAMPLE:-True}"
 val_temperature="${VAL_TEMPERATURE:-1.0}"
 val_top_p="${VAL_TOP_P:-1.0}"
 val_top_k="${VAL_TOP_K:--1}"
-val_subset_ratio="${VAL_SUBSET_RATIO:-1.0}"
+val_subset_ratio="${VAL_SUBSET_RATIO:-0.1}"
 val_subset_seed="${VAL_SUBSET_SEED:-42}"
 val_subset_resample_each_eval="${VAL_SUBSET_RESAMPLE_EACH_EVAL:-False}"
 
