@@ -57,7 +57,7 @@ val_do_sample="${VAL_DO_SAMPLE:-True}"
 val_temperature="${VAL_TEMPERATURE:-1.0}"
 val_top_p="${VAL_TOP_P:-1.0}"
 val_top_k="${VAL_TOP_K:--1}"
-val_subset_ratio="${VAL_SUBSET_RATIO:-0.1}"
+val_subset_ratio="${VAL_SUBSET_RATIO:-1.0}"
 val_subset_seed="${VAL_SUBSET_SEED:-42}"
 val_subset_resample_each_eval="${VAL_SUBSET_RESAMPLE_EACH_EVAL:-False}"
 
