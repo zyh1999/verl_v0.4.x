@@ -1,8 +1,8 @@
-    #!/usr/bin/env bash
+#!/usr/bin/env bash
 set -xeuo pipefail
 
 # ============================================================
-# verl GRPO Example: Llama-3.2-3B-Instruct (Math)
+# verl GRPO Example: Qwen2.5-3B-Instruct (Math)
 # - 风格尽量仿照 ASPO/Archer2.0 的训练脚本（变量集中在顶部 + 可用环境变量覆盖）
 # - 入口保持 verl：python -m verl.trainer.main_ppo
 # ============================================================
@@ -31,8 +31,8 @@ math_test_path="${MATH_TEST_PATH:-$data_root/math/test.parquet}"
 train_files="${TRAIN_FILES:-['$gsm8k_train_path']}"
 test_files="${TEST_FILES:-['$gsm8k_test_path']}"
 
-# 模型（对齐 ASPO：Llama 3B）
-MODEL_PATH="${MODEL_PATH:-meta-llama/Llama-3.2-3B-Instruct}"
+# 模型（默认：Qwen2.5 3B）
+MODEL_PATH="${MODEL_PATH:-Qwen/Qwen2.5-3B-Instruct}"
 
 # 长度配置
 max_prompt_length="${MAX_PROMPT_LENGTH:-1024}"
@@ -45,7 +45,7 @@ micro_batch_size_per_gpu="${MICRO_BATCH_SIZE_PER_GPU:-16}"
 ppo_epochs="${PPO_EPOCHS:-3}"
 
 project_name="${PROJECT_NAME:-verl_grpo_example}"
-exp_name="${EXP_NAME:-llama3.2_3b_no_IS_gsm8k_grpo_epochs_${ppo_epochs}}"
+exp_name="${EXP_NAME:-qwen2.5_3b_no_IS_gsm8k_grpo_epochs_${ppo_epochs}}"
 
 
 # Algorithm
@@ -95,7 +95,7 @@ out_dir="${OUT_DIR:-./outputs/${project_name}/${exp_name}}"
 mkdir -p "${out_dir}"
 
 echo "============================================================"
-echo "[verl][GRPO] Llama-3.2-3B"
+echo "[verl][GRPO] Qwen2.5-3B"
 echo "project_name=${project_name}"
 echo "exp_name=${exp_name}"
 echo "model=${MODEL_PATH}"
