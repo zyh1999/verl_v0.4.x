@@ -1234,6 +1234,12 @@ def compute_policy_loss_vanilla(
 
     pg_losses = torch.where(advantages < 0, clip_pg_losses2, clip_pg_losses1)
 
+    # Optional "no-IS" gradients:
+    # After selecting the PPO clipped branch, divide by ratio.detach() to remove IS weighting in gradients.
+    # This keeps PPO-style branch selection behavior but makes gradients VPG-like w.r.t. IS weights.
+    if not config.get("use_importance_sampling", True):
+        pg_losses = pg_losses / ratio.detach()
+
     # Apply rollout correction weights if provided
     if rollout_is_weights is not None:
         pg_losses = pg_losses * rollout_is_weights

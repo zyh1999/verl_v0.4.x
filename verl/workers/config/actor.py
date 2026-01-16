@@ -116,6 +116,9 @@ class ActorConfig(BaseConfig):
         use_fused_kernels (bool): Whether to use custom fused kernels (e.g., FlashAttention, fused MLP).
         data_loader_seed (int): Seed for data loader. If None, uses global seed.
         router_replay (RouterReplayConfig): Configuration for router replay in MoE models.
+        use_importance_sampling (bool): Whether to use importance sampling weights in PPO-style policy gradients.
+            - True (default): standard PPO/GRPO behavior (ratio-weighted gradients)
+            - False: "no-IS" variant (VPG-like), removes IS weighting in gradients while keeping the PPO clipping branch selection
     """
 
     _mutable_fields = BaseConfig._mutable_fields | {
@@ -147,6 +150,7 @@ class ActorConfig(BaseConfig):
     tau_pos: float = 1.0
     tau_neg: float = 1.05
     calculate_entropy: bool = False
+    use_importance_sampling: bool = True
     use_kl_loss: bool = False
     # Whether to enable PrefixGrouper-based shared-prefix forward
     use_prefix_grouper: bool = False

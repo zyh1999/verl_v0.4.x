@@ -180,6 +180,18 @@ trainer:
   # Whether to run validation only
   val_only: False
 
+  # Optional validation subsampling (to reduce validation overhead):
+  # - 1.0 means use the full validation set (default behavior)
+  # - 0.1 means sample ~10% of each validation batch on every validation run (or deterministically if resample_each_eval=False)
+  val_subset_ratio: 1.0
+
+  # Seed for validation subsampling.
+  val_subset_seed: 42
+
+  # If False, uses a deterministic subset (stable across evals) controlled by val_subset_seed.
+  # If True, resamples each eval using (val_subset_seed + global_steps).
+  val_subset_resample_each_eval: False
+
   # Validation frequency (in training iterations)
   test_freq: -1
 

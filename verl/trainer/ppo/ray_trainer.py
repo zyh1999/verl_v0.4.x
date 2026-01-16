@@ -21,6 +21,7 @@ This trainer supports model-agonistic model initialization with huggingface
 import json
 import os
 import uuid
+import hashlib
 from collections import defaultdict
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -619,6 +620,20 @@ class RayPPOTrainer:
         sample_turns = []
         sample_uids = []
 
+        # Optional validation subsampling (to reduce validation overhead).
+        # We sample ~ratio of each validation batch before repeating (val_kwargs.n).
+        # - If val_subset_resample_each_eval=False: deterministic hash-based filter (stable subset across evals)
+        # - If True: resample stochastically each eval based on (seed + global_steps)
+        val_subset_ratio = float(self.config.trainer.get("val_subset_ratio", 1.0))
+        val_subset_seed = int(self.config.trainer.get("val_subset_seed", 42))
+        val_subset_resample_each_eval = bool(self.config.trainer.get("val_subset_resample_each_eval", False))
+        if val_subset_ratio <= 0.0:
+            return {}
+        if val_subset_ratio < 1.0:
+            seed = val_subset_seed + (self.global_steps if val_subset_resample_each_eval else 0)
+            rng = np.random.RandomState(seed) if val_subset_resample_each_eval else None
+            n_total, n_selected = 0, 0
+
         for test_data in self.val_dataloader:
             test_batch = DataProto.from_single_dict(test_data)
 
@@ -626,6 +641,35 @@ class RayPPOTrainer:
                 test_batch.non_tensor_batch["uid"] = np.array(
                     [str(uuid.uuid4()) for _ in range(len(test_batch.batch))], dtype=object
                 )
+
+            if val_subset_ratio < 1.0:
+                bs = len(test_batch)
+                n_total += bs
+                if val_subset_resample_each_eval:
+                    keep = rng.rand(bs) < val_subset_ratio  # type: ignore[union-attr]
+                    if not np.any(keep):
+                        # Ensure validation never becomes empty due to unlucky subsampling.
+                        keep[int(rng.randint(bs))] = True  # type: ignore[union-attr]
+                else:
+                    # Deterministic selection based on uid + seed.
+                    uids = test_batch.non_tensor_batch["uid"]
+                    keep = np.zeros(bs, dtype=bool)
+                    min_u = 1.0
+                    min_i = 0
+                    for i in range(bs):
+                        key_bytes = (str(uids[i]) + f"|{val_subset_seed}").encode("utf-8")
+                        h = hashlib.blake2b(key_bytes, digest_size=8).digest()
+                        u = int.from_bytes(h, "little") / float(2**64)
+                        keep[i] = u < val_subset_ratio
+                        if u < min_u:
+                            min_u = u
+                            min_i = i
+                    if not np.any(keep):
+                        keep[min_i] = True
+
+                idxs = np.nonzero(keep)[0]
+                n_selected += len(idxs)
+                test_batch = test_batch[idxs]
 
             # repeat test batch
             test_batch = test_batch.repeat(
@@ -705,6 +749,12 @@ class RayPPOTrainer:
                 sample_turns.append(test_batch.non_tensor_batch["__num_turns__"])
 
             data_source_lst.append(test_batch.non_tensor_batch.get("data_source", ["unknown"] * reward_tensor.shape[0]))
+
+        if val_subset_ratio < 1.0:
+            mode = "resample" if val_subset_resample_each_eval else "fixed"
+            print(
+                f"[validation] val_subset_ratio={val_subset_ratio} selected={n_selected}/{n_total} (mode={mode}, seed={seed})"
+            )
 
         self._maybe_log_val_generations(inputs=sample_inputs, outputs=sample_outputs, scores=sample_scores)
 
