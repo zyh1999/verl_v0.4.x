@@ -33,29 +33,7 @@ from io import StringIO
 from unittest.mock import mock_open, patch
 
 import numpy as np
-from types import ModuleType
-
-try:
-    # Optional dependency used by some environments to materialize a module from source.
-    from pyext import RuntimeModule  # type: ignore
-except Exception:  # pragma: no cover
-    RuntimeModule = None  # type: ignore[assignment]
-
-
-def _module_from_string(name: str, code: str) -> ModuleType:
-    """
-    Fallback for environments without `pyext`.
-    NOTE: This is NOT a security sandbox; `reliability_guard()` is still required.
-    """
-    m = ModuleType(name)
-    exec(code, m.__dict__)
-    return m
-
-
-def _runtime_from_string(name: str, code: str):
-    if RuntimeModule is not None:
-        return RuntimeModule.from_string(name, "", code)
-    return _module_from_string(name, code)
+from pyext import RuntimeModule
 
 
 def truncatefn(s, length=300):
@@ -143,7 +121,7 @@ def run_test(in_outs, test=None, debug=False, timeout=15):
                 print(f"sol = {sol}")
             signal.alarm(timeout)
             try:
-                tmp_sol = _runtime_from_string("tmp_sol", sol)
+                tmp_sol = RuntimeModule.from_string("tmp_sol", "", sol)
                 tmp = tmp_sol if "class Solution" not in test else tmp_sol.Solution()
                 signal.alarm(0)
             except Exception as e:
@@ -203,7 +181,7 @@ def run_test(in_outs, test=None, debug=False, timeout=15):
             method_name = "code"
             signal.alarm(timeout)
             try:
-                tmp_sol = _runtime_from_string("tmp_sol", sol)
+                tmp_sol = RuntimeModule.from_string("tmp_sol", "", sol)
                 tmp = tmp_sol
                 signal.alarm(0)
             except Exception as e:
