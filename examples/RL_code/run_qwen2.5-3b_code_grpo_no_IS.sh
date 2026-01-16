@@ -69,6 +69,7 @@ sp_size="${SP_SIZE:-1}"
 gen_tp="${GEN_TP:-1}"
 use_dynamic_bsz="${USE_DYNAMIC_BSZ:-True}"
 offload="${OFFLOAD:-False}"
+rollout_name="${ROLLOUT_NAME:-vllm}"
 
 sandbox_fusion_url="${SANDBOX_FUSION_URL:-}"
 sandbox_fusion_max_concurrent="${SANDBOX_FUSION_MAX_CONCURRENT:-64}"
@@ -135,6 +136,7 @@ echo "============================================================"
   actor_rollout_ref.actor.fsdp_config.optimizer_offload="${offload}" \
   actor_rollout_ref.actor.ulysses_sequence_parallel_size="${sp_size}" \
   actor_rollout_ref.rollout.tensor_model_parallel_size="${gen_tp}" \
+  actor_rollout_ref.rollout.name="${rollout_name}" \
   actor_rollout_ref.rollout.n="${n_resp_per_prompt}" \
   actor_rollout_ref.rollout.temperature="${temperature}" \
   actor_rollout_ref.rollout.top_p="${top_p}" \
