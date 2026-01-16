@@ -122,14 +122,14 @@ echo "============================================================"
   data.train_files="${train_files}" \
   data.val_files="${test_files}" \
   data.train_batch_size="${train_prompt_bsz}" \
-  +data.dataloader_num_workers=2 \
+  data.dataloader_num_workers=2 \
   data.max_prompt_length="${max_prompt_length}" \
   data.max_response_length="${max_response_length}" \
   data.filter_overlong_prompts=True \
   data.truncation='error' \
   actor_rollout_ref.model.path="${MODEL_PATH}" \
-  +actor_rollout_ref.model.override_config.attn_implementation=flash_attention_2 \
-  +actor_rollout_ref.actor.fsdp_config.model_dtype=bf16 \
+  actor_rollout_ref.model.override_config.attn_implementation=flash_attention_2 \
+  actor_rollout_ref.actor.fsdp_config.model_dtype=bf16 \
   actor_rollout_ref.model.use_remove_padding=True \
   actor_rollout_ref.model.enable_gradient_checkpointing=True \
   actor_rollout_ref.actor.use_dynamic_bsz="${use_dynamic_bsz}" \
