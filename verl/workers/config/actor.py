@@ -119,6 +119,8 @@ class ActorConfig(BaseConfig):
         use_importance_sampling (bool): Whether to use importance sampling weights in PPO-style policy gradients.
             - True (default): standard PPO/GRPO behavior (ratio-weighted gradients)
             - False: "no-IS" variant (VPG-like), removes IS weighting in gradients while keeping the PPO clipping branch selection
+        disable_clip (bool): If True, disable PPO clipping in the policy loss (and also disable dual-clip).
+            This is useful for ablation studies comparing clipped PPO vs unclipped objective.
     """
 
     _mutable_fields = BaseConfig._mutable_fields | {
@@ -151,6 +153,8 @@ class ActorConfig(BaseConfig):
     tau_neg: float = 1.05
     calculate_entropy: bool = False
     use_importance_sampling: bool = True
+    # Ablation: disable PPO clipping (and dual-clip) in compute_policy_loss_vanilla
+    disable_clip: bool = False
     use_kl_loss: bool = False
     # Whether to enable PrefixGrouper-based shared-prefix forward
     use_prefix_grouper: bool = False

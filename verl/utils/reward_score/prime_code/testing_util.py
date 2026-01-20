@@ -33,7 +33,23 @@ from io import StringIO
 from unittest.mock import mock_open, patch
 
 import numpy as np
-from pyext import RuntimeModule
+
+# `pyext` is optional. It is not compatible with Python 3.12 (uses deprecated inspect.getargspec).
+# We only need its RuntimeModule.from_string() behavior (load a module from source text),
+# which can be implemented via the standard library.
+try:
+    from pyext import RuntimeModule  # type: ignore
+except Exception:  # noqa: BLE001
+    import types
+
+    class RuntimeModule:  # noqa: D101
+        @staticmethod
+        def from_string(module_name: str, _path: str, source: str):
+            module = types.ModuleType(module_name)
+            module.__file__ = f"<{module_name}>"
+            code = compile(source, module.__file__, "exec")
+            exec(code, module.__dict__)  # noqa: S102
+            return module
 
 
 def truncatefn(s, length=300):

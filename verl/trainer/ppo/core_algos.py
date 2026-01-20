@@ -1191,6 +1191,16 @@ def compute_policy_loss_vanilla(
 
     assert config is not None
     assert not isinstance(config, AlgoConfig)
+    # ---------------------------------------------------------------------
+    # Clip ablation switch:
+    # - disable_clip=True  => no PPO clipping (and also disable dual-clip).
+    # - Works with use_importance_sampling=False (no-IS) as well.
+    #
+    # Usage (hydra override):
+    #   actor_rollout_ref.actor.disable_clip=True
+    # ---------------------------------------------------------------------
+    disable_clip = bool(config.get("disable_clip", False))
+
     clip_ratio = config.clip_ratio  # Clipping parameter ε for standard PPO. See https://arxiv.org/abs/1707.06347.
     clip_ratio_low = config.clip_ratio_low if config.clip_ratio_low is not None else clip_ratio
     clip_ratio_high = config.clip_ratio_high if config.clip_ratio_high is not None else clip_ratio
@@ -1202,16 +1212,23 @@ def compute_policy_loss_vanilla(
     cliprange_low = clip_ratio_low
     cliprange_high = clip_ratio_high
 
-    assert clip_ratio_c > 1.0, (
-        "The lower bound of the clip_ratio_c for dual-clip PPO should be greater than 1.0,"
-        + f" but get the value: {clip_ratio_c}."
-    )
-
     negative_approx_kl = log_prob - old_log_prob
     # Clamp negative_approx_kl for stability
     negative_approx_kl = torch.clamp(negative_approx_kl, min=-20.0, max=20.0)
     ratio = torch.exp(negative_approx_kl)
     ppo_kl = verl_F.masked_mean(-negative_approx_kl, response_mask)
+
+    if disable_clip:
+        # No clip PPO objective: L = -E[r * A]
+        # (Dual-clip is also disabled here.)
+        pg_losses = -advantages * ratio
+        pg_clipfrac = torch.tensor(0.0, device=pg_losses.device, dtype=pg_losses.dtype)
+        pg_clipfrac_lower = torch.tensor(0.0, device=pg_losses.device, dtype=pg_losses.dtype)
+    else:
+        assert clip_ratio_c > 1.0, (
+            "The lower bound of the clip_ratio_c for dual-clip PPO should be greater than 1.0,"
+            + f" but get the value: {clip_ratio_c}."
+        )
 
     pg_losses1 = -advantages * ratio
     if cliprange_low is None:
@@ -1226,6 +1243,7 @@ def compute_policy_loss_vanilla(
     )  # max(-ratio * A, -clip(ratio, 1-cliprange, 1+cliprange) * A)
     pg_clipfrac = verl_F.masked_mean(torch.gt(pg_losses2, pg_losses1).float(), response_mask)
 
+        # Dual-clip PPO
     pg_losses3 = -advantages * clip_ratio_c
     clip_pg_losses2 = torch.min(pg_losses3, clip_pg_losses1)
     pg_clipfrac_lower = verl_F.masked_mean(
@@ -1238,6 +1256,8 @@ def compute_policy_loss_vanilla(
     # After selecting the PPO clipped branch, divide by ratio.detach() to remove IS weighting in gradients.
     # This keeps PPO-style branch selection behavior but makes gradients VPG-like w.r.t. IS weights.
     if not config.get("use_importance_sampling", True):
+        # no-IS gradients: remove IS weighting in gradients by dividing with ratio.detach().
+        # Works both for clipped PPO (branch-selected) and for the no-clip objective above.
         pg_losses = pg_losses / ratio.detach()
 
     # Apply rollout correction weights if provided

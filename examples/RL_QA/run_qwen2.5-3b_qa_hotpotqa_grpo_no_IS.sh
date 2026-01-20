@@ -2,13 +2,16 @@
 set -xeuo pipefail
 
 # ============================================================
-# verl GRPO Example (no-IS): Qwen2.5 3B (Code)
-# - 基于 examples/grpo_trainer/run_qwen2.5-3b_math_grpo_no_IS.sh 的脚本风格
-# - 与 run_qwen2.5-3b_code_grpo.sh 唯一区别：use_importance_sampling=False
+# verl GRPO Example: Qwen2.5-3B-Instruct (QA-EM / HotpotQA)
+# - 基于 examples/grpo_trainer/run_qwen2.5-3b_math_grpo_no_IS.sh
+# - 除数据集路径/默认 project&exp 命名外，其余训练超参数保持不变
+# - 依赖 verl 内置的 QA-EM reward：data_source=searchR1_hotpotqa 且输出含 <answer>...</answer>
 # ============================================================
 
 unset VLLM_ATTENTION_BACKEND
 unset ROCR_VISIBLE_DEVICES
+
+
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -16,7 +19,6 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 # 默认使用当前 PATH 上的 python（在容器里建议激活 venv 后运行，例如 source .verl/bin/activate）
 # 如需指定，运行前设置：PYTHON_BIN=/path/to/python
 PYTHON_BIN="${PYTHON_BIN:-$(command -v python)}"
-nnodes="${NNODES:-1}"
 
 # 统一把运行时产生的缓存/临时文件写到「当前目录」(默认你在仓库根目录 verl_v0.4.x 下运行 bash)。
 # 可通过环境变量覆盖（例如 CACHE_BASE=/mnt/home）。
@@ -33,100 +35,93 @@ export HUGGINGFACE_HUB_CACHE="${HUGGINGFACE_HUB_CACHE:-${HF_HOME}/hub}"
 export RAY_TMPDIR="${RAY_TMPDIR:-${CACHE_BASE}/ray}"
 mkdir -p "${XDG_CACHE_HOME}" "${HF_DATASETS_CACHE}" "${HUGGINGFACE_HUB_CACHE}" "${RAY_TMPDIR}"
 
+nnodes="${NNODES:-1}"
+
+# 数据（只改这里：指向 QA parquet）
 data_root="${DATA_ROOT:-${ROOT_DIR}/data}"
-code_train_path="${CODE_TRAIN_PATH:-$data_root/code/train.parquet}"
-code_test_path="${CODE_TEST_PATH:-$data_root/code/test.parquet}"
+qa_train_path="${QA_TRAIN_PATH:-$data_root/RL_QA/hotpotqa_em/train.parquet}"
+qa_test_path="${QA_TEST_PATH:-$data_root/RL_QA/hotpotqa_em/test.parquet}"
 
-train_files="${TRAIN_FILES:-['$code_train_path']}"
-test_files="${TEST_FILES:-['$code_test_path']}"
+train_files="${TRAIN_FILES:-['$qa_train_path']}"
+test_files="${TEST_FILES:-['$qa_test_path']}"
 
-MODEL_PATH="${MODEL_PATH:-Qwen/Qwen2.5-1.5B-Instruct}"
+# 模型（默认：Qwen2.5 3B）
+# 支持把模型作为第一个位置参数传入（本地路径或 HF 模型名）：
+#   bash run_qwen2.5-3b_qa_hotpotqa_grpo_no_IS.sh <MODEL_PATH_OR_NAME> [hydra_overrides...]
+# 注意：为避免把 hydra overrides（形如 key=value）误当成模型，这里只在第一个参数不含 '=' 时才视为模型参数。
+if [[ $# -gt 0 && "${1}" != -* && "${1}" != +* && "${1}" != *=* && "${1}" != *"="* ]]; then
+  MODEL_PATH="${1}"
+  shift
+else
+  MODEL_PATH="${MODEL_PATH:-Qwen/Qwen2.5-3B-Instruct}"
+fi
 
-max_prompt_length="${MAX_PROMPT_LENGTH:-1024}"
-max_response_length="${MAX_RESPONSE_LENGTH:-3072}"
+# 长度配置（保持不变；如需更省显存可通过环境变量覆盖 MAX_RESPONSE_LENGTH）
+max_prompt_length="${MAX_PROMPT_LENGTH:-2560}"
+max_response_length="${MAX_RESPONSE_LENGTH:-2048}"
 
+# batch 配置（保持不变）
 train_prompt_bsz="${TRAIN_PROMPT_BSZ:-64}"
 train_prompt_mini_bsz="${TRAIN_PROMPT_MINI_BSZ:-16}"
-micro_batch_size_per_gpu="${MICRO_BATCH_SIZE_PER_GPU:-4}"
+micro_batch_size_per_gpu="${MICRO_BATCH_SIZE_PER_GPU:-16}"
 ppo_epochs="${PPO_EPOCHS:-3}"
 
-project_name="${PROJECT_NAME:-verl_grpo_example_code}"
-exp_name="${EXP_NAME:-qwen2.5_coder_3b_code_no_IS_grpo_epochs_${ppo_epochs}}"
+# 仅修改默认 project/exp 名，避免覆盖 math 日志；训练超参不变
+project_name="${PROJECT_NAME:-verl_grpo_example_qa}"
+exp_name="${EXP_NAME:-qwen2.5_3b_no_IS_hotpotqa_em_grpo_epochs_${ppo_epochs}}"
 
+# Algorithm（保持不变）
 adv_estimator="${ADV_ESTIMATOR:-grpo}"
-n_resp_per_prompt="${N_RESP_PER_PROMPT:-4}"
+n_resp_per_prompt="${N_RESP_PER_PROMPT:-8}"
 temperature="${TEMPERATURE:-1.0}"
 top_p="${TOP_P:-1.0}"
 top_k="${TOP_K:--1}"
 
-val_n="${VAL_N:-8}"
+# Validation（保持不变）
+val_n="${VAL_N:-16}"
 val_do_sample="${VAL_DO_SAMPLE:-True}"
 val_temperature="${VAL_TEMPERATURE:-1.0}"
 val_top_p="${VAL_TOP_P:-1.0}"
 val_top_k="${VAL_TOP_K:--1}"
-val_subset_ratio="${VAL_SUBSET_RATIO:-1.0}"
+val_subset_ratio="${VAL_SUBSET_RATIO:-0.1}"
 val_subset_seed="${VAL_SUBSET_SEED:-42}"
 val_subset_resample_each_eval="${VAL_SUBSET_RESAMPLE_EACH_EVAL:-False}"
 
+# KL config（保持不变）
 use_kl_in_reward="${USE_KL_IN_REWARD:-False}"
 kl_coef="${KL_COEF:-0.0}"
 use_kl_loss="${USE_KL_LOSS:-True}"
 kl_loss_coef="${KL_LOSS_COEF:-0.001}"
 kl_loss_type="${KL_LOSS_TYPE:-low_var_kl}"
 
+# clip（保持不变）
 clip_ratio_low="${CLIP_RATIO_LOW:-0.2}"
 clip_ratio_high="${CLIP_RATIO_HIGH:-0.2}"
 clip_ratio_c="${CLIP_RATIO_C:-3.0}"
 loss_agg_mode="${LOSS_AGG_MODE:-token-mean}"
 
-# no-IS
-use_importance_sampling="${USE_IMPORTANCE_SAMPLING:-False}"
+# no-IS（默认关闭：0；也兼容 True/False）
+use_importance_sampling_raw="${USE_IMPORTANCE_SAMPLING:-0}"
+case "${use_importance_sampling_raw}" in
+  1|true|True|TRUE) use_importance_sampling="True" ;;
+  0|false|False|FALSE|"") use_importance_sampling="False" ;;
+  *) use_importance_sampling="${use_importance_sampling_raw}" ;; # 允许用户手动传 "True/False"
+esac
 
+# 性能相关参数（保持不变）
 sp_size="${SP_SIZE:-1}"
 gen_tp="${GEN_TP:-1}"
 use_dynamic_bsz="${USE_DYNAMIC_BSZ:-True}"
 offload="${OFFLOAD:-False}"
-# rollout 引擎可用显存占比（控制 KV cache 预留；过大可能导致训练/rollout 切换时 OOM）
-gpu_mem_util="${GPU_MEMORY_UTILIZATION:-0.40}"
-# rollout 稳定性相关开关（默认不改变现有行为；需要时用环境变量或 SAFE_MODE 一键降峰值）
-rollout_enforce_eager="${ROLLOUT_ENFORCE_EAGER:-False}"         # True: 关闭 cudagraph（更稳但更慢）
-rollout_multi_stage_wake_up="${ROLLOUT_MULTI_STAGE_WAKE_UP:-False}" # True: 降低训练/rollout 切换峰值（SGLang 生效）
-
-# 一键“保命模式”：用于验证是不是峰值资源问题（不影响你手动显式设置的环境变量）
-SAFE_MODE="${SAFE_MODE:-1}"
-if [[ "${SAFE_MODE}" == "1" ]]; then
-  : "${MAX_RESPONSE_LENGTH:=1024}"
-  : "${N_RESP_PER_PROMPT:=2}"
-  : "${GPU_MEMORY_UTILIZATION:=0.25}"
-  : "${ROLLOUT_ENFORCE_EAGER:=True}"
-  : "${ROLLOUT_MULTI_STAGE_WAKE_UP:=True}"
-  # 重新展开（让下面变量拿到 SAFE_MODE 注入后的值）
-  max_response_length="${MAX_RESPONSE_LENGTH}"
-  n_resp_per_prompt="${N_RESP_PER_PROMPT}"
-  gpu_mem_util="${GPU_MEMORY_UTILIZATION}"
-  rollout_enforce_eager="${ROLLOUT_ENFORCE_EAGER}"
-  rollout_multi_stage_wake_up="${ROLLOUT_MULTI_STAGE_WAKE_UP}"
-fi
-
 # rollout inference engine: sglang | vllm | hf
 ENGINE="${ENGINE:-sglang}"
 
-sandbox_fusion_url="${SANDBOX_FUSION_URL:-}"
-sandbox_fusion_max_concurrent="${SANDBOX_FUSION_MAX_CONCURRENT:-64}"
-
+# 日志/输出
 out_dir="${OUT_DIR:-./outputs/${project_name}/${exp_name}}"
 mkdir -p "${out_dir}"
 
-extra_args=()
-if [[ -n "${sandbox_fusion_url}" ]]; then
-  extra_args+=("reward_model.sandbox_fusion.url=${sandbox_fusion_url}")
-  extra_args+=("reward_model.sandbox_fusion.max_concurrent=${sandbox_fusion_max_concurrent}")
-else
-  extra_args+=("reward_model.sandbox_fusion.url=null")
-fi
-
 echo "============================================================"
-echo "[verl][GRPO][no-IS] Qwen2.5 3B (Code)"
+echo "[verl][GRPO] Qwen2.5-3B (QA-EM HotpotQA)"
 echo "project_name=${project_name}"
 echo "exp_name=${exp_name}"
 echo "model=${MODEL_PATH}"
@@ -136,13 +131,10 @@ echo "train_bsz=${train_prompt_bsz}, mini_bsz=${train_prompt_mini_bsz}, micro_bs
 echo "ppo_epochs=${ppo_epochs}"
 echo "n=${n_resp_per_prompt}, temp=${temperature}, top_p=${top_p}, top_k=${top_k}"
 echo "engine=${ENGINE}, gen_tp=${gen_tp}"
-echo "gpu_memory_utilization=${gpu_mem_util}"
-echo "rollout_enforce_eager=${rollout_enforce_eager}, rollout_multi_stage_wake_up=${rollout_multi_stage_wake_up}"
 echo "val_n=${val_n}, val_do_sample=${val_do_sample}, val_temp=${val_temperature}, val_top_p=${val_top_p}, val_top_k=${val_top_k}"
 echo "val_subset_ratio=${val_subset_ratio}"
 echo "val_subset_seed=${val_subset_seed}, val_subset_resample_each_eval=${val_subset_resample_each_eval}"
 echo "use_importance_sampling=${use_importance_sampling}"
-echo "sandbox_fusion_url=${sandbox_fusion_url:-<local prime_code>}"
 echo "============================================================"
 
 "${PYTHON_BIN}" -m verl.trainer.main_ppo \
@@ -150,7 +142,6 @@ echo "============================================================"
   data.train_files="${train_files}" \
   data.val_files="${test_files}" \
   data.train_batch_size="${train_prompt_bsz}" \
-  data.dataloader_num_workers=2 \
   data.max_prompt_length="${max_prompt_length}" \
   data.max_response_length="${max_response_length}" \
   data.filter_overlong_prompts=True \
@@ -180,12 +171,8 @@ echo "============================================================"
   actor_rollout_ref.actor.fsdp_config.optimizer_offload="${offload}" \
   actor_rollout_ref.actor.ulysses_sequence_parallel_size="${sp_size}" \
   +ray_kwargs.ray_init._temp_dir="${RAY_TMPDIR}" \
-  +ray_kwargs.ray_init.include_dashboard=False \
-  actor_rollout_ref.rollout.name="${ENGINE}" \
-  actor_rollout_ref.rollout.gpu_memory_utilization="${gpu_mem_util}" \
-  actor_rollout_ref.rollout.enforce_eager="${rollout_enforce_eager}" \
-  actor_rollout_ref.rollout.multi_stage_wake_up="${rollout_multi_stage_wake_up}" \
   actor_rollout_ref.rollout.tensor_model_parallel_size="${gen_tp}" \
+  actor_rollout_ref.rollout.name="${ENGINE}" \
   actor_rollout_ref.rollout.n="${n_resp_per_prompt}" \
   actor_rollout_ref.rollout.temperature="${temperature}" \
   actor_rollout_ref.rollout.top_p="${top_p}" \
@@ -201,13 +188,12 @@ echo "============================================================"
   trainer.logger='["console","wandb"]' \
   trainer.project_name="${project_name}" \
   trainer.experiment_name="${exp_name}" \
-  trainer.n_gpus_per_node="${NGPUS_PER_NODE:-1}" \
+  trainer.n_gpus_per_node="${NGPUS_PER_NODE:-2}" \
   trainer.nnodes="${nnodes}" \
   trainer.save_freq="${SAVE_FREQ:-100}" \
   trainer.test_freq="${TEST_FREQ:-20}" \
   trainer.total_epochs="${TOTAL_EPOCHS:-4}" \
   trainer.default_local_dir="${out_dir}" \
-  "${extra_args[@]}" \
-  "$@" 2>&1 | tee "${out_dir}/${project_name}_${exp_name}_grpo_no_IS.log"
+  "$@" 2>&1 | tee "${out_dir}/${project_name}_${exp_name}_grpo.log"
 
 

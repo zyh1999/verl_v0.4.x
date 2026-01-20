@@ -38,7 +38,10 @@ if __name__ == "__main__":
     parser.add_argument("--hdfs_dir", default=None)
     parser.add_argument("--local_dataset_path", default=None, help="The local path to the raw dataset, if it exists.")
     parser.add_argument(
-        "--local_save_dir", default="~/data/gsm8k", help="The save directory for the preprocessed dataset."
+        # Default to repo-local path to avoid writing to $HOME or container-only filesystem.
+        "--local_save_dir",
+        default="data/gsm8k",
+        help="The save directory for the preprocessed dataset (default: data/gsm8k).",
     )
 
     args = parser.parse_args()
@@ -95,6 +98,10 @@ if __name__ == "__main__":
         print("Warning: Argument 'local_dir' is deprecated. Please use 'local_save_dir' instead.")
     else:
         local_save_dir = args.local_save_dir
+
+    # Expand "~" and ensure output dir exists.
+    local_save_dir = os.path.expanduser(local_save_dir)
+    os.makedirs(local_save_dir, exist_ok=True)
 
     train_dataset.to_parquet(os.path.join(local_save_dir, "train.parquet"))
     test_dataset.to_parquet(os.path.join(local_save_dir, "test.parquet"))

@@ -45,7 +45,15 @@ def default_compute_score(
         from . import gsm8k
 
         res = gsm8k.compute_score(solution_str, ground_truth)
-    elif data_source in ["lighteval/MATH", "DigitalLearningGmbH/MATH-lighteval", "HuggingFaceH4/MATH-500"]:
+    elif data_source in [
+        "lighteval/MATH",
+        "DigitalLearningGmbH/MATH-lighteval",
+        "HuggingFaceH4/MATH-500",
+        # SeRL-derived parquet datasets (we keep these names so users can separate curves by data_source)
+        "serl_math_train_full",
+        "serl_math_500",
+        "serl_math_hard",
+    ] or str(data_source).startswith("serl_math"):
         from . import math_reward
 
         res = math_reward.compute_score(solution_str, ground_truth)

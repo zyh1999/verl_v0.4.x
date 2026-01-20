@@ -15,8 +15,24 @@ unset ROCR_VISIBLE_DEVICES
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-# 固定使用 conda 的 verl 环境 python（避免 notebook/jupyter 里 python 指到别的环境）
-PYTHON_BIN="${PYTHON_BIN:-/mnt/iusers01/fatpou01/compsci01/h99859yz/miniconda3/envs/verl/bin/python}"
+# 默认使用当前 PATH 上的 python（在容器里建议激活 venv 后运行，例如 source .verl/bin/activate）
+# 如需指定，运行前设置：PYTHON_BIN=/path/to/python
+PYTHON_BIN="${PYTHON_BIN:-$(command -v python)}"
+
+# 统一把运行时产生的缓存/临时文件写到「当前目录」(默认你在仓库根目录 verl_v0.4.x 下运行 bash)。
+# 可通过环境变量覆盖（例如 CACHE_BASE=/mnt/home）。
+export HYDRA_FULL_ERROR="${HYDRA_FULL_ERROR:-1}"
+CACHE_BASE="${CACHE_BASE:-.}"
+mkdir -p "${CACHE_BASE}"
+# 统一把 cache base 规范成绝对路径（一些工具要求 cache 目录必须是绝对路径）
+CACHE_BASE="$(cd "${CACHE_BASE}" && pwd)"
+export CACHE_BASE
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-${CACHE_BASE}/.cache}"
+export HF_HOME="${HF_HOME:-${CACHE_BASE}/.hf}"
+export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-${HF_HOME}/datasets}"
+export HUGGINGFACE_HUB_CACHE="${HUGGINGFACE_HUB_CACHE:-${HF_HOME}/hub}"
+export RAY_TMPDIR="${RAY_TMPDIR:-${CACHE_BASE}/ray}"
+mkdir -p "${XDG_CACHE_HOME}" "${HF_DATASETS_CACHE}" "${HUGGINGFACE_HUB_CACHE}" "${RAY_TMPDIR}"
 
 nnodes="${NNODES:-1}"
 
@@ -82,6 +98,11 @@ sp_size="${SP_SIZE:-1}"
 gen_tp="${GEN_TP:-1}"
 use_dynamic_bsz="${USE_DYNAMIC_BSZ:-True}"
 offload="${OFFLOAD:-False}"
+# rollout 引擎可用显存占比（控制 KV cache 预留；过大可能导致训练/rollout 切换时 OOM）
+gpu_mem_util="${GPU_MEMORY_UTILIZATION:-0.40}"
+
+# rollout inference engine: sglang | vllm | hf
+ENGINE="${ENGINE:-sglang}"
 
 # 可选：远程沙箱判题（更安全，避免本地执行不可信代码）
 # - SANDBOX_FUSION_URL 为空则走本地 prime_code 判题
@@ -110,6 +131,8 @@ echo "max_prompt_length=${max_prompt_length}, max_response_length=${max_response
 echo "train_bsz=${train_prompt_bsz}, mini_bsz=${train_prompt_mini_bsz}, micro_bsz/gpu=${micro_batch_size_per_gpu}"
 echo "ppo_epochs=${ppo_epochs}"
 echo "n=${n_resp_per_prompt}, temp=${temperature}, top_p=${top_p}, top_k=${top_k}"
+echo "engine=${ENGINE}, gen_tp=${gen_tp}"
+echo "gpu_memory_utilization=${gpu_mem_util}"
 echo "val_n=${val_n}, val_do_sample=${val_do_sample}, val_temp=${val_temperature}, val_top_p=${val_top_p}, val_top_k=${val_top_k}"
 echo "val_subset_ratio=${val_subset_ratio}"
 echo "val_subset_seed=${val_subset_seed}, val_subset_resample_each_eval=${val_subset_resample_each_eval}"
@@ -129,7 +152,8 @@ echo "============================================================"
   data.truncation='error' \
   actor_rollout_ref.model.path="${MODEL_PATH}" \
   +actor_rollout_ref.model.override_config.attn_implementation=flash_attention_2 \
-  +actor_rollout_ref.actor.fsdp_config.model_dtype=bf16 \
+  actor_rollout_ref.actor.fsdp_config.model_dtype=bf16 \
+  actor_rollout_ref.actor.fsdp_config.dtype=bf16 \
   actor_rollout_ref.model.use_remove_padding=True \
   actor_rollout_ref.model.enable_gradient_checkpointing=True \
   actor_rollout_ref.actor.use_dynamic_bsz="${use_dynamic_bsz}" \
@@ -150,6 +174,10 @@ echo "============================================================"
   actor_rollout_ref.actor.fsdp_config.param_offload="${offload}" \
   actor_rollout_ref.actor.fsdp_config.optimizer_offload="${offload}" \
   actor_rollout_ref.actor.ulysses_sequence_parallel_size="${sp_size}" \
+  +ray_kwargs.ray_init._temp_dir="${RAY_TMPDIR}" \
+  +ray_kwargs.ray_init.include_dashboard=False \
+  actor_rollout_ref.rollout.name="${ENGINE}" \
+  actor_rollout_ref.rollout.gpu_memory_utilization="${gpu_mem_util}" \
   actor_rollout_ref.rollout.tensor_model_parallel_size="${gen_tp}" \
   actor_rollout_ref.rollout.n="${n_resp_per_prompt}" \
   actor_rollout_ref.rollout.temperature="${temperature}" \
@@ -166,7 +194,7 @@ echo "============================================================"
   trainer.logger='["console","wandb"]' \
   trainer.project_name="${project_name}" \
   trainer.experiment_name="${exp_name}" \
-  trainer.n_gpus_per_node="${NGPUS_PER_NODE:-2}" \
+  trainer.n_gpus_per_node="${NGPUS_PER_NODE:-1}" \
   trainer.nnodes="${nnodes}" \
   trainer.save_freq="${SAVE_FREQ:-100}" \
   trainer.test_freq="${TEST_FREQ:-20}" \
